@@ -1,0 +1,48 @@
+def get_DB_client(host,
+                  username,
+                  password,
+                  database,
+                  port=8086,
+                  ssl=True,
+                  verify_ssl=True):
+
+    client = InfluxDBClient(host=host, port=8086, 
+                            username=username, password=password,database=database, ssl=True, verify_ssl=True)
+    return client
+
+def transform_to_dict(s, key):
+    dic = {}
+    dic[key] = s
+    return dic
+
+def post_to_DB(client,data,measurement,tags,fields): # Data comes from Skyspark in pandas format. Send directly as is.
+
+    data = data.stack()
+    data = data.reset_index() # moved line up to here
+    data.columns = ['time', 'Meter Name','Value']
+    #data.iloc[:,0] = data.iloc[:,0].apply(time_transform)
+    #data.columns = ['time', 'meter name','connected_devices']
+    data.dropna(inplace=True)
+    data['measurement'] = measurement
+    data["fields"] = data.iloc[:,2].apply(transform_to_dict, key=fields)
+    data["tags"] = data.iloc[:,1].apply(transform_to_dict, key=tags)
+    data['time'] = data['time']
+    json = data[["measurement","time", "tags", "fields"]].to_dict("records")
+    ret = client.write_points(json,batch_size=10000)
+    return ret
+
+host = 'localhost'
+port = 8086
+username = 'username'
+password = 'password'
+database = 'DB'
+measurement = 'measurement'
+tags = 'Meter Name'
+fields = 'Value'
+clientAndrew =get_DB_client(host,
+                          username=username,
+                          password=password,
+                          database=database,
+                          port=port,
+                          ssl=True,
+                          verify_ssl=True)
