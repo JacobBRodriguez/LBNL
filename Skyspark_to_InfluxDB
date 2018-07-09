@@ -2,11 +2,11 @@ def get_DB_client(host,
                   username,
                   password,
                   database,
-                  port=8086,
+                  port,
                   ssl=True,
                   verify_ssl=True):
 
-    client = InfluxDBClient(host=host, port=8086, 
+    client = InfluxDBClient(host=host, port, 
                             username=username, password=password,database=database, ssl=True, verify_ssl=True)
     return client
 
@@ -31,10 +31,13 @@ def post_to_DB(client,data,measurement,tags,fields): # Data comes from Skyspark 
     ret = client.write_points(json,batch_size=10000)
     return ret
 
-host = 'localhost'
-port = 8086
-username = 'username'
-password = 'password'
+config_file = 'influxdb.ini'
+Config = configparser.ConfigParser()
+Config.read(config_file)
+host = Config.get("ACCESS INFO", 'Host')
+username = Config.get("ACCESS INFO", 'Username')
+password = Config.get("ACCESS INFO", 'Password')
+port = Config.get("ACCESS INFO", "Port")
 database = 'DB'
 measurement = 'measurement'
 tags = 'Meter Name'
