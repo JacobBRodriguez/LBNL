@@ -11,6 +11,7 @@ Last updated on 2017-11-19
 
 @author: rvitti
 @author: marco.pritoni
+@author: jrodriguez13
 
 """
 import configparser
@@ -43,8 +44,8 @@ class AxonException(Exception):
 
 class spyspark_client(object):
 
-    
-    def __init__(self, URL=None):
+###############################################################################    
+    def __init__(self, URL=None, config_file=None):
 
         if URL:
             self.URL = URL
@@ -58,27 +59,44 @@ class spyspark_client(object):
             scram.update_token()
             
         self.auth_token = scram.current_token()
+        
+        #Added functionaily from Andrew's code @jbrodriguez@ucdavis.edu
+        
+        Config = configparser.ConfigParser()
+        Config.read(config_file)
+        self.host = Config.get("DB_config", "host")
+        self.username = Config.get("DB_config", "username")
+        self.password = Config.get("DB_config", "password")
+        self.database = Config.get("skyspark_meta", "database")
+        self.protocol = Config.get("DB_config", "protocol")
+        self.measurement = Config.get("skyspark_meta", "measurement")
+        self.port = Config.get("DB_config", "port")
+        self.tags = Config.get("skyspark_meta", "tags").split(',')
+        self.fields = Config.get("skyspark_meta", "fields").split(',')
 
         return
 
-
+###############################################################################
     def _compose_url(self,query):
         
         request_uri = host_addr + "eval?expr=" + urllib.parse.quote(query)
 
         return request_uri
 
-
+###############################################################################
     def _send_request(self,request_uri, result_type):
 
         #auth_token = scram.current_token() # removed because already saved in class variable
         headers= {"authorization": "BEARER authToken="+self.auth_token,
                   "accept": result_type}
-        r = requests.get(request_uri, headers=headers)
-        
+        try:
+            r = requests.get(request_uri, headers=headers)
+        except e:
+            print("Error in request: "+e)
+            return None
         return r
 
-
+###############################################################################
     def _manage_errors(self,r,result_type):
 
         if r.status_code == 200:
@@ -99,23 +117,31 @@ class spyspark_client(object):
         else:
             raise Exception("HTTP error: %d" % r.status_code)
 
-
+###############################################################################
     def _parse_metadata_table_json(self, res):
         
         return pd.io.json.json_normalize(res["rows"])
 
-
+###############################################################################
     def _parse_TS_data_json(self, res, result_type):
+        
         ## get metadata info
         metadata = (pd.io.json.json_normalize(res["cols"][1:len(res["cols"])]))
         ## transform json into dataframe (TODO: add example for documentation)
 
         TSdata = (pd.io.json.json_normalize(res["rows"]))
+        
+        
         ## format timestamp data inside the dataframe
         # remove intial 't:' and final tz from timestamp: 't:2017-11-26T00:25:00-08:00 Los_Angeles',
         pat = r"(t:)([0-9T\-:]{19})(.{3,})" # regex to separate into three groups
         repl = lambda m: m.group(2) # take central group
-        TSdata["ts"] = pd.to_datetime(TSdata["ts"].str.replace(pat, repl)) # change into datetime type and apply regex
+        try:
+            TSdata["ts"] = pd.to_datetime(TSdata["ts"].str.replace(pat, repl)) # change into datetime type and apply regex
+        except:
+            #raise Exception("No time series data returned from query")
+            print("No time series data returned from query")
+            return None
         TSdata.set_index("ts", inplace=True, drop=True) # set datetime as index
         #### need to do: need to correct for timezone!!!
 
@@ -140,7 +166,7 @@ class spyspark_client(object):
         elif result_type == "ts": 
             return TSdata
 
-
+###############################################################################
     def _parse_results(self, r, result_format, result_type):
 
         ## this method manages the different result_formats: csv, json, zinc
@@ -169,7 +195,7 @@ class spyspark_client(object):
             return r
 
 
-
+###############################################################################
     def request(self, query: str, result_format: str = "application/json", result_type: str = "meta"):  ## -> str: removed type returned, more flex! 
         """Send Axon request to SkySpark through REST API, return resulting text
         
@@ -211,39 +237,80 @@ class spyspark_client(object):
 
                 return res
 
-
-    def readAll(self, query, result_format = "application/json", result_type="meta"):
+###############################################################################
+    def _readAll(self, query, result_format = "application/json", result_type="meta"):
 
 
         return self.request(query=query, result_format=result_format, result_type=result_type)
 
-
-    def hisRead(self, query, result_format = "application/json", result_type="ts"):
+###############################################################################
+    def _hisRead(self, query, result_format = "application/json", result_type="ts"):
 
         # eventually we want to dot this after a readAll
 
         return self.request(query=query, result_format=result_format, result_type=result_type)
 
-
+###############################################################################
     def read(self,):
 
         return
 
-
+###############################################################################
     def eval(self,):
 
         return
 
-
+###############################################################################
     def evalAll(self,):
 
         return
-
+###############################################################################
     def hisWrite(self,):
 
         return
 
+###############################################################################
+# Added functionality 7/10/18 @jbrodriguez@ucdavis.edu
+    def _transform_to_dict(self, s, tags):
+        dic ={}
+        for tag in tags:
+            dic[tag] = s[tag]
 
+        return dic
+
+###############################################################################
+    def _build_json(self, data, tags, fields, measurement):
+        data['measurement'] = measurement
+        data['tags'] = data.apply(self._transform_to_dict,tags=tags, axis=1)
+        data['fields'] = data.apply(self._transform_to_dict,tags=fields, axis=1)
+
+        json = data[['measurement','time','tags','fields']].to_dict("records")
+        return json
+
+###############################################################################
+    def query_data(self, query, result_type):
+        if result_type == "meta":
+            df = self._readAll(query)
+        elif result_type == "ts":
+            df = self._hisRead(query)
+        return df
+###############################################################################
+    def query(self, query): # Client-Server model of querying for data based on user input query
+        if ("->link==" in query) and (".hisRead" not in query):
+            df = self._readAll(query)
+        elif ("equipRef==" in query) and (".hisRead" not in query):
+            df = self._readAll(query)
+        elif ("->link==" in query) and (".hisRead" in query):
+            df = self._hisRead(query)
+        elif ("equipRef==" in query) and (".hisRead" in query):
+            df = self._hisRead(query)
+        return df
+###############################################################################
+    def _make_client(self):
+        self.client = InfluxDBClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
+        self.df_client = DataFrameClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
+        
+###############################################################################
 if __name__ == '__main__':
     """Simple console to send REST request to SkySpark and display results"""
     ref = "https://skyfoundry.com/doc/docSkySpark/Axon"
