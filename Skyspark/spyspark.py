@@ -7,7 +7,7 @@ request        Send Axon request to SkySpark, return resulting text
 __name__       Simple console to send REST request to SkySpark
 
 Created on Sun Nov 19 15:29:51 2017
-Last updated on 2017-11-19
+Last updated on 2018-07-18
 
 @author: rvitti
 @author: marco.pritoni
@@ -20,6 +20,7 @@ import requests
 import urllib.parse
 import pandas as pd
 import json
+import datetime
 
 
 import scram
@@ -71,8 +72,10 @@ class spyspark_client(object):
         self.protocol = Config.get("DB_config", "protocol")
         self.measurement = Config.get("skyspark_meta", "measurement")
         self.port = Config.get("DB_config", "port")
-        self.tags = Config.get("skyspark_meta", "tags").split(',')
-        self.fields = Config.get("skyspark_meta", "fields").split(',')
+        self.tags = Config.get("skyspark_meta", "tags")
+        self.tags = self.tags.split(',')
+        self.fields = Config.get("skyspark_meta", "fields")
+        self.fields = self.fields.split(',')
 
         return
 
@@ -271,31 +274,105 @@ class spyspark_client(object):
 
 ###############################################################################
 # Added functionality 7/10/18 @jbrodriguez@ucdavis.edu
-    def _transform_to_dict(self, s, tags):
-        dic ={}
-        for tag in tags:
-            dic[tag] = s[tag]
-
+    def _transform_to_dict(s, key): # Prototype function. May not use.
+        dic = {}
+        dic[key] = s
         return dic
 
 ###############################################################################
-    def _build_json(self, data, tags, fields, measurement):
+    def _build_json(self, data, tags, fields, measurement): # Prototype function. May not use.
         data['measurement'] = measurement
-        data['tags'] = data.apply(self._transform_to_dict,tags=tags, axis=1)
-        data['fields'] = data.apply(self._transform_to_dict,tags=fields, axis=1)
-
+        data['fields'] = data.iloc[:,2].apply(self._transform_to_dict, key=fields)
+        data['tags'] = data.iloc[:,1].apply(self._transform_to_dict, key=tags)
+        data['time'] = data['time']
         json = data[['measurement','time','tags','fields']].to_dict("records")
         return json
 
 ###############################################################################
-    def query_data(self, query, result_type):
+    def query_data(self, query, result_type): # Basic query of all meta and timeseries data
         if result_type == "meta":
             df = self._readAll(query)
         elif result_type == "ts":
             df = self._hisRead(query)
         return df
 ###############################################################################
-    def query(self, query): # Client-Server model of querying for data based on user input query
+# Function takes in dictionary of tags to query database on and returns metadata that matches tag requirements
+    def get_metadata(self, tags):
+        query = 'readAll('
+        flag = 0
+        if tags: # If given list of tags
+            for key, value in tags.items(): # For each tag in the list, add to query that is being built
+                if flag == 0: # For first tag, do not include 'and'
+                    flag = 1
+                    if value == True: # If Marker is true
+                        query = query + key
+                        
+                    elif value == False: # If Marker is false
+                        query = query + 'not '+ key
+                            
+                    elif ('id' in key): # If Ref wants to include key
+                            query = query + key+'==@'+ value
+                    
+                    # NOTE: Non-marker tags cannot have negated query i.e. 'not link=='28.75'
+                    #elif ('not' in value) and ('link' in key): # Query based on link number
+                     #   query = query + 'not '+key+'=="'+ value.split(' ')[1]+'"'
+                            
+                    elif ('link' in key): # Query based on link number
+                        query = query + key +'=="'+ value+'"'
+                    
+                    elif ('combustionVolume' in key): # Query based on combustionVolume
+                        query = query + key+'=='+value
+                        
+                    elif ('navName' in key): # Query based on navName
+                        query = query + key +'=="'+ value+'"'
+                        
+                    elif ('siteRef' in key): # Query based on siteRef
+                            query = query + key+'==@'+ value
+               
+                else: # include 'and' for rest of tags in query
+                    if value == True: # Query based on marker tags
+                        query = query + ' and ' + key
+                        
+                    elif value == False: # Marker tag queries
+                        query = query + ' and not '+ key
+                        
+                    elif ('id' in key): # If Ref wants to include key
+                        query = query +' and ' + key +'==@'+ value
+                            
+                    elif ('link' in key): # For link number
+                        query = query +' and ' + key +'=="'+ value+'"'
+                    
+                    elif ('combustionVolume' in key): # For combustionVolume
+                        query = query +' and '+ key+'=='+value
+                        
+                    elif ('navName' in key): # For navName
+                        query = query +' and '+ key +'=="'+ value+'"'
+                        
+                    elif ('siteRef' in key): # For siteRef
+                        query = query +' and '+ key+'==@'+ value
+                        
+            query = query + ')'
+            print(query)
+            df = self._readAll(query)
+            return df    
+###############################################################################
+# Function takes in dataframe of metadata information and returns timeseries data in dataframe format
+    def get_ts_from_meta(self, metadata):
+        
+        main_df = pd.DataFrame()
+        now = datetime.datetime.now() # Getting current date so can query data based off of most recent timestamp
+        date = now.strftime("%Y,%m,%d")
+        
+        for item in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
+            query = 'readAll(equipRef==@'+item.split(' ')[0][2:]+').hisRead(date(2010,01,01)..date('+date+'), {limit: null})'
+            ts = self._hisRead(query) # Get historical timeseries data from query
+            main_df = main_df.append(ts) # Append returned timeseries data to current dataframe
+            
+        return main_df
+###############################################################################
+    def query(self, query): # Querying for data based on user input query. 
+                            # Can be and type of axon query that user defines. Returns dataframe
+        df = pd.DataFrame()
         if ("->link==" in query) and (".hisRead" not in query):
             df = self._readAll(query)
         elif ("equipRef==" in query) and (".hisRead" not in query):
@@ -306,10 +383,21 @@ class spyspark_client(object):
             df = self._hisRead(query)
         return df
 ###############################################################################
-    def _make_client(self):
+    def _make_client(self): # Prototype function that may or may not use from influx. Might use Andrew's code as class object
         self.client = InfluxDBClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
         self.df_client = DataFrameClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
         
+###############################################################################
+    def send_to_influx(self, data): # Prototype function that might throw out in favor of class object from Andrew's Influxdb code
+        data = data.stack()
+        data = data.reset_index()
+        data.columns = ['time', 'Meter_Name', 'Value']
+        data.dropna(inplace=True)
+        measurement = 'measurement'
+        tags = 'Meter Name'
+        fields = 'Value'
+        json = self._build_json(data, tags, fields, measurement)
+        return data
 ###############################################################################
 if __name__ == '__main__':
     """Simple console to send REST request to SkySpark and display results"""
