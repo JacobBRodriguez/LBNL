@@ -7,7 +7,7 @@ request        Send Axon request to SkySpark, return resulting text
 __name__       Simple console to send REST request to SkySpark
 
 Created on Sun Nov 19 15:29:51 2017
-Last updated on 2018-07-18
+Last updated on 2018-10-15
 
 @author: rvitti
 @author: marco.pritoni
@@ -21,7 +21,13 @@ import urllib.parse
 import pandas as pd
 import json
 import datetime
+import threading
+import math
+import time
 
+from TS_Util_Clean_Data_test import ts_util
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 import scram
 
@@ -29,6 +35,7 @@ import scram
 DEFAULT_URL = "http://skyspark.lbl.gov/api/lbnl/"
 CONFIG_FILE = "./spyspark.cfg"
 MAX_ATTEMPTS = 3
+tu = ts_util() # For data quality analysis
 
 # Define global module variables, in particular config object
 config = configparser.ConfigParser()
@@ -46,7 +53,7 @@ class AxonException(Exception):
 class spyspark_client(object):
 
 ###############################################################################    
-    def __init__(self, URL=None, config_file=None):
+    def __init__(self, URL=None):
 
         if URL:
             self.URL = URL
@@ -61,26 +68,24 @@ class spyspark_client(object):
             
         self.auth_token = scram.current_token()
         
-        #Added functionaily from Andrew's code @jbrodriguez@ucdavis.edu
-        
-        Config = configparser.ConfigParser()
-        Config.read(config_file)
-        self.host = Config.get("DB_config", "host")
-        self.username = Config.get("DB_config", "username")
-        self.password = Config.get("DB_config", "password")
-        self.database = Config.get("skyspark_meta", "database")
-        self.protocol = Config.get("DB_config", "protocol")
-        self.measurement = Config.get("skyspark_meta", "measurement")
-        self.port = Config.get("DB_config", "port")
-        self.tags = Config.get("skyspark_meta", "tags")
-        self.tags = self.tags.split(',')
-        self.fields = Config.get("skyspark_meta", "fields")
-        self.fields = self.fields.split(',')
-
         return
 
 ###############################################################################
     def _compose_url(self,query):
+        
+        """ Construct request URI for querying data from Skyspark database.
+        
+        Parameters
+        ----------
+        query : str
+            Axon query string.
+            
+        Returns
+        -------
+        request_uri : str
+            URI string containing host address and Axon query.
+            
+        """
         
         request_uri = host_addr + "eval?expr=" + urllib.parse.quote(query)
 
@@ -88,7 +93,22 @@ class spyspark_client(object):
 
 ###############################################################################
     def _send_request(self,request_uri, result_type):
-
+        
+         """ Send URI get request to Skyspark database and return http response for later parsing.
+        
+        Parameters
+        ----------
+        request_uri : str
+            URI string containing host address and Axon query.
+        result_type : str
+            Resulting format of returned data (application/json, csv, or zinc).
+            
+        Returns
+        -------
+        r : text
+            Resulting text from returned 'get' request from Skyspark database query. 
+            
+        """
         #auth_token = scram.current_token() # removed because already saved in class variable
         headers= {"authorization": "BEARER authToken="+self.auth_token,
                   "accept": result_type}
@@ -200,20 +220,33 @@ class spyspark_client(object):
 
 ###############################################################################
     def request(self, query: str, result_format: str = "application/json", result_type: str = "meta"):  ## -> str: removed type returned, more flex! 
-        """Send Axon request to SkySpark through REST API, return resulting text
+        
+        """ Send Axon request to SkySpark through REST API, return resulting text.
         
         Use SkySpark REST API to query the database using the Axon query passed
         as first argument.  Use authorization token stored in spyspark.cfg.  If
         an authorization issue is detected, attempt to re-authorize.  If other
         HTTP issues are detected, raise Exception.  Return result as string.
         
+        Note
+        ----
         If the Axon query returns 'empty\n', a custom AxonException is raised.
         This can occur if there are no results or if the query is bad.
         
-        Keyword arguments:
-        query       -- Axon query as string
-        result_type -- Requested MIME type in which to receive results
-                       (default: "text/csv" for CSV format)
+        Parameters
+        ----------
+        query : str
+            Axon query as string.
+        result_format : str
+            Requested MIME type in which to receive results (default: "text/csv" for CSV format).
+        result_type : str
+            Requested return type of data (ts or meta).
+            
+        Returns
+        -------
+        res : pd.DataFrame()
+            Dataframe containing timeseries or metadata data from Skyspark.
+            
         """
 
         ## I slit this into subparts
@@ -268,43 +301,84 @@ class spyspark_client(object):
 
         return
 ###############################################################################
-    def hisWrite(self,):
-
+    def hisWrite(self, query):
+     
         return
-
 ###############################################################################
 # Added functionality 7/10/18 @jbrodriguez@ucdavis.edu
-    def _transform_to_dict(s, key): # Prototype function. May not use.
-        dic = {}
-        dic[key] = s
-        return dic
-
-###############################################################################
-    def _build_json(self, data, tags, fields, measurement): # Prototype function. May not use.
-        data['measurement'] = measurement
-        data['fields'] = data.iloc[:,2].apply(self._transform_to_dict, key=fields)
-        data['tags'] = data.iloc[:,1].apply(self._transform_to_dict, key=tags)
-        data['time'] = data['time']
-        json = data[['measurement','time','tags','fields']].to_dict("records")
-        return json
-
-###############################################################################
-    def query_data(self, query, result_type): # Basic query of all meta and timeseries data
+    def query_data(self, query, result_type):
+        """ Query Skyspark via Axon language.
+        
+        Parameters
+        ----------
+        query : str
+            Axon query string.
+        result_type : str
+            Time series or metadata return option (usage 'ts' or 'meta').
+            
+        Returns
+        -------
+        pd.DataFrame()
+            Dataframe containing timeseries or metadata data.
+            
+        """
         if result_type == "meta":
             df = self._readAll(query)
         elif result_type == "ts":
             df = self._hisRead(query)
         return df
 ###############################################################################
-# Function takes in dictionary of tags to query database on and returns metadata that matches tag requirements
+    def _query_now(self, metadata):
+        """ Private function to query Skyspark for timeseries data from metadata.
+        
+        Parameters
+        ----------
+        metadata : pd.DataFrame()
+            Dataframe of metadata returned from get_metadata function.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            Dataframe containing time series of current time (now).
+            
+        """
+        main_df = pd.DataFrame()
+        
+        for item in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
+            query = 'readAll(equipRef==@'+item.split(' ')[0][2:]+').hisRead(now, {limit: null})'
+            ts = self._hisRead(query) # Get current timeseries data from query
+            main_df = main_df.append(ts) # Append returned timeseries data to current dataframe  
+        return main_df 
+###############################################################################
     def get_metadata(self, tags):
+        
+        """ Query Skyspark for meters that match metadata tags.
+        
+        Parameters
+        ----------
+        tags : dictionary
+            Dictionary of tags for filtering meters.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing metadata/meters that match given criteria.
+            
+        """
         query = 'readAll('
         flag = 0
         if tags: # If given list of tags
             for key, value in tags.items(): # For each tag in the list, add to query that is being built
                 if flag == 0: # For first tag, do not include 'and'
                     flag = 1
-                    if value == True: # If Marker is true
+                    
+                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True: # If want to include both gas and elec
+                        query = query + '(elec or gas)'
+                        
+                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False: # If want to include both gas and elec
+                        query = query + 'not (elec or gas)'
+                    
+                    elif value == True: # If Marker is true
                         query = query + key
                         
                     elif value == False: # If Marker is false
@@ -330,7 +404,14 @@ class spyspark_client(object):
                             query = query + key+'==@'+ value
                
                 else: # include 'and' for rest of tags in query
-                    if value == True: # Query based on marker tags
+                    
+                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True: # If want to include both gas and elec
+                        query = query + ' and (elec or gas) '
+                        
+                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False: # If want to include both gas and elec
+                        query = query + ' and not (elec or gas)'
+                    
+                    elif value == True: # Query based on marker tags
                         query = query + ' and ' + key
                         
                     elif value == False: # Marker tag queries
@@ -354,11 +435,24 @@ class spyspark_client(object):
             query = query + ')'
             print(query)
             df = self._readAll(query)
-            return df    
+            return df     
 ###############################################################################
 # Function takes in dataframe of metadata information and returns timeseries data in dataframe format
     def get_ts_from_meta(self, metadata):
         
+        """ Return all time series data from given meter metadata input.
+        
+        Parameters
+        ----------
+        metadata : pd.DataFrame()
+            DataFrame containing meter metadata.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing time series data from meters in metadata input.
+            
+        """
         main_df = pd.DataFrame()
         now = datetime.datetime.now() # Getting current date so can query data based off of most recent timestamp
         date = now.strftime("%Y,%m,%d")
@@ -369,9 +463,297 @@ class spyspark_client(object):
             main_df = main_df.append(ts) # Append returned timeseries data to current dataframe
             
         return main_df
+############################################################################### 
+# Function is to take in dataframe column (Accumulator, Raw) from gas meters and check if interval data is correct
+# If intervals are fine, returns original frame, else returns reindexed dataframe based on reasoned interval
+    def do_raw_analysis(self, data):
+        
+        """ Check if time series data has consistent timestamp or pulse interval for gas meters. Will reindex on assumed interval if no consistency is initially found.
+        
+        Parameters
+        ----------
+        data : pd.DataFrame()
+            'Accumulator, Raw' DataFrame column from gas meter time series data.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing original or reindexed time series data.
+            
+        """
+        data = data.dropna()
+        timeFlag = False
+        pulseFlag = False
+        if data.index.to_series().diff().dt.seconds.std() == 0:
+            print('Consistent timestamp interval')
+
+        else:
+            timeFlag = True
+            print('Inconsistent timestamp interval')
+
+        if (data.diff().min() == 0).bool():
+            pulseFlag = True
+            print('Inconsistent pulse interval')
+
+        else:
+            print('Consistent pulse interval')
+
+        if timeFlag and pulseFlag:
+            print('Reindexing data based on assumed interval')
+            assumedInterval = data.index.to_series().diff().dt.seconds.min()
+            print('Assumed interval is '+str(assumedInterval)+' seconds')
+            assumedInterval = str(assumedInterval) + 'S'
+            new_index = pd.date_range(start=data.index[0], end=data.index[data.index.size - 1], freq=assumedInterval)
+            data = data.reindex(new_index)
+            return data
+
+        return data
 ###############################################################################
-    def query(self, query): # Querying for data based on user input query. 
-                            # Can be and type of axon query that user defines. Returns dataframe
+# Function is designed for data quality analysis of incoming link data for run_analysis_from_meta function    
+    def data_quality_analysis(self, data):
+
+        """ Run data quality analysis on meter data against given metrics to determine overall meter health.
+        
+        Parameters
+        ----------
+        data : pd.DataFrame()
+            DataFrame containing meter data.
+            
+        Returns
+        -------
+        curr_sens : pd.DataFrame()
+            DataFrame containing meter metrics and values achieved for each test.
+            
+        """
+        curr_sens= pd.DataFrame()
+        curr_sens["first_valid"] = tu.first_valid_per_col(data)
+        curr_sens["last_valid"] = tu.last_valid_per_col(data)
+        curr_sens["period_length"] = curr_sens["last_valid"] - curr_sens["first_valid"]
+        curr_sens["count"] = data.count()
+        curr_sens["missing_n"] = tu.count_missing(data, output="number")
+        curr_sens["missing_perc"] = tu.count_missing(data, output="percent")
+        curr_sens["zeroVal_n"] = tu.count_if(data, operator="=", val=0, output="number")
+        curr_sens["zeroVal_perc"] = tu.count_if(data, operator="=", val=0, output="percent")
+        curr_sens["flatline_n"] = tu.count_flatlines(data, output="number")
+        curr_sens["flatline_perc"] = tu.count_flatlines(data, output="percent")
+        curr_sens["outliersStdv_n"] = tu.count_outliers(data,method="std",coeff=3)
+        curr_sens["outliersStdv_perc"] = tu.count_outliers(data,method="std",coeff=3,output="percent")
+        curr_sens["dominate_issue"] = curr_sens.apply(self._find_dominate_issue, axis=1)
+        curr_sens["% ok"] = curr_sens.apply(self._find_percent_ok, axis=1)
+
+        return curr_sens    
+###############################################################################
+# Helper function to find the max of the data quality analysis columns and returns max name
+    def _find_dominate_issue(self, frame):
+        
+        """ Helper function to data_quality_analysis to find the maximum value achieved in all columns and returns name of column.
+        
+        Parameters
+        ----------
+        frame : pd.DataFrame()
+            DataFrame containing meter metrics with values from data_quality_analysis function.
+            
+        Returns
+        -------
+        String
+            String of the name of the column that achieved highest value from meter analysis.
+            
+        """
+        maxNum = max(frame['missing_perc'],frame['zeroVal_perc'],frame['flatline_perc'],frame['outliersStdv_perc'])
+        
+        if maxNum == 0:
+            return 'All percentages zero'
+        elif frame['missing_perc'] == maxNum:
+            return 'missing_perc'
+        elif frame['zeroVal_perc'] == maxNum:
+            return 'zeroVal_perc'
+        elif frame['flatline_perc'] == maxNum:
+            return 'flatline_perc'
+        else:
+            return 'outliersStdv_perc'   
+###############################################################################
+# Helper function to find the percent of OK for data quality analysis and returns that percent
+    def _find_percent_ok(self, frame):
+        
+        """ Helper function to data_quality_analysis to find the overall percentage of meter being OK based on subtraction of error metrics.
+        
+        Parameters
+        ----------
+        frame : pd.DataFrame()
+            DataFrame containing meter metrics with values from data_quality_analysis function.
+            
+        Returns
+        -------
+        Int
+            Integer number representing the percentage value of meter being OK in relation to error metrics.
+            
+        """
+        percent_bad = frame['missing_perc']+frame['zeroVal_perc']+frame['flatline_perc']+frame['outliersStdv_perc']
+        return (100 - percent_bad)
+###############################################################################
+# Helper function to return list of dates that we will be running the analysis on for meter quality checks
+    def get_dates_list(self, worksheet):
+        
+        """ Helper function to run_analysis_from_meta to generate list of dates for meter analysis.
+        
+        Parameters
+        ----------
+        worksheet : GSpread worksheet
+            GSpread library worksheet containing manual read values for given date range and meters.
+            
+        Returns
+        -------
+        dateList : list
+            List containing dates for given range data analysis will be ran on.
+            
+        """
+        dates = {}
+        dateList = []
+        timestamps = worksheet.col_values(1)
+        del timestamps[0]
+      
+        for item in timestamps: 
+            if item != '': 
+                dates[item] = item
+              
+        for key, value in dates.items():
+            dateList.append(value.replace(" ",""))
+            
+        return dateList
+###############################################################################
+# Function takes in dataframe of metadata information and url of GoogleSheets wanting to compare to
+    # Returns a dataframe of meter comparison to GoogleSheets  
+ 
+    def run_analysis_from_meta(self, metadata, Sheets_url, save_each_meter_to_csv=False):
+        
+        """ Run meter comparison and data quality analysis on meters in metadata DataFrame.
+        
+        Parameters
+        ----------
+        metadata : pd.DataFrame()
+            DataFrame containing meter metadata.  
+        Sheets_url : String
+            String of the url that points to the Google Sheets document that contains manual read data.   
+        save_each_meter_to_csv : Boolean
+            Optional Boolean value to save meter analysis information into csv and png files.
+            
+        Returns
+        -------
+        extended : pd.DataFrame()
+            DataFrame containing all meter's comparison information for given time frame.
+            
+        main_df : pd.DataFrame()
+            DataFrame containing all meter's data quality analysis information for given time frame.
+            
+        """
+        # Holding dataframes
+        main_df = pd.DataFrame()
+        extended = pd.DataFrame()
+            # GoogleSheets imports
+        scope = ['https://spreadsheets.google.com/feeds'] # Keep this as the scope
+        credentials = ServiceAccountCredentials.from_json_keyfile_name('My Project-01d0ad43c251.json',scope) # Json comes from Google API                                                    # page. Can just use my email on API page from this to access spreadsheets
+        gc = gspread.authorize(credentials)
+        
+        sheet = gc.open_by_url(Sheets_url)
+        worksheet = sheet.get_worksheet(0)
+        months_list = self.get_dates_list(worksheet)
+        all_list = worksheet.get_all_values()
+ 
+        last_month_index = (len(months_list)-1)
+        date_time_start = datetime.datetime.strptime(months_list[0], '%m/%d/%Y').strftime('%Y,%m,%d')
+        date_time_end = datetime.datetime.strptime(months_list[last_month_index], '%m/%d/%Y').strftime('%Y,%m,%d')
+        
+        for item in metadata['link']: # For each link number in list
+           
+            if not math.isnan(float(item)):
+                link_float = "{:.2f}".format(float(item)) # Need float to retain 2 past decimal point precision
+                info_get = self.query('readAll(equipRef->link=="'+item+'").hisRead(date('+date_time_start+')..date('+date_time_end+'), {limit: null})')
+                time_dict = {}
+                man_value = {}
+                sky_value = {}
+                specific_column = ""
+                multiplier = 0 # Need multiplier for Skyspark energy data for gas and water
+                
+                for thing in info_get.columns:
+                    if 'BTU' in thing:
+                        multiplier = pow(10,5)
+                        break
+                    elif 'kWh' in thing:
+                        multiplier = 1
+                        break
+                        
+                for column in info_get.columns:
+                    if("Energy" in column and "Accumulator" not in column):
+                        specific_column = column
+
+                for k,i in enumerate(months_list):
+                    #do something with index k
+                    #do something with element i # taking list of dates needed for comparison
+                    if k > (last_month_index - 1):
+                        break
+                    try:
+                        timeStart = i + " 12:15:00"
+                        timeEnd = months_list[k+1] + " 12:00:00"
+                        
+                        num = info_get[specific_column].to_frame()[timeStart : timeEnd]
+                        num = (float(num.sum()[0])) / multiplier # Multiplier = 1 for electricity meters and 10^5 for gas meters
+                        for row in all_list:
+                            if row[1] == link_float:
+                                
+                                if pd.to_datetime(row[0]) == datetime.datetime.strptime(months_list[k+1], '%m/%d/%Y'):
+                                    time_dict[months_list[k+1]] = ((float(row[4].replace(',','')) - num) /                                                                                          float(row[4].replace(',',''))) * 100 # Percent different
+                                    man_value[months_list[k+1]] = float(row[4].replace(',',''))
+                                    sky_value[months_list[k+1]] = num
+                                    
+
+                    except:
+                        print("Error for data: "+i+" on meter "+item)
+
+            try:
+                data_quality_analysis1 = self.data_quality_analysis(info_get)
+                main_df = main_df.append(data_quality_analysis1)
+
+                percent = pd.DataFrame(time_dict, index=[0]).T.rename( columns={0:"Percent Dif"})
+                man = pd.DataFrame(man_value, index=[0]).T.rename( columns={0:"Manual Read"})
+                sky = pd.DataFrame(sky_value, index=[0]).T.rename( columns={0:"Skyspark Read"})
+                result = pd.concat([man, sky, percent], axis=1)
+                result.index = pd.to_datetime(result.index, format="%m/%d/%Y")
+                result = result.sort_index()
+                extended[item] = result["Percent Dif"]
+
+                if save_each_meter_to_csv: # If we want to save each meter to an individual
+                    link_string = "Link_"+str(item)
+                    result.to_csv(link_string+"_Reads.csv")
+                    ax = result.plot.bar(y=["Manual Read", "Skyspark Read"], rot=0, figsize=(22,10))
+                    fig = ax.get_figure()
+                    fig.autofmt_xdate()
+                    fig.savefig(link_string+".png")
+                        
+            except:    
+                    print("Error on link number: "+item)
+        extended.index = pd.to_datetime(extended.index)
+        extended = extended.sort_index()
+        return extended, main_df
+###############################################################################
+    def query(self, query):
+        
+        """ Run Axon query based on link number or equipRef and return time series or metadata.
+        
+        Parameters
+        ----------
+        query : String
+            Axon query containing link number/equipRef ID.
+            
+        Returns
+        -------
+        df : pd.DataFrame()
+            DataFrame containing time series or metadata information from Axon query.
+        """
+        '''
+        Takes in Axon query that is based on link number or equipRef and hisRead or no hisRead option for ts or metadata respectively
+        Returns ts or metadata in dataframe format.
+        
+        '''
         df = pd.DataFrame()
         if ("->link==" in query) and (".hisRead" not in query):
             df = self._readAll(query)
@@ -382,22 +764,6 @@ class spyspark_client(object):
         elif ("equipRef==" in query) and (".hisRead" in query):
             df = self._hisRead(query)
         return df
-###############################################################################
-    def _make_client(self): # Prototype function that may or may not use from influx. Might use Andrew's code as class object
-        self.client = InfluxDBClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
-        self.df_client = DataFrameClient(self.host, self.port, self.username, self.password, self.database, ssl=True, verify_ssl=True)
-        
-###############################################################################
-    def send_to_influx(self, data): # Prototype function that might throw out in favor of class object from Andrew's Influxdb code
-        data = data.stack()
-        data = data.reset_index()
-        data.columns = ['time', 'Meter_Name', 'Value']
-        data.dropna(inplace=True)
-        measurement = 'measurement'
-        tags = 'Meter Name'
-        fields = 'Value'
-        json = self._build_json(data, tags, fields, measurement)
-        return data
 ###############################################################################
 if __name__ == '__main__':
     """Simple console to send REST request to SkySpark and display results"""
