@@ -94,7 +94,7 @@ class spyspark_client(object):
 ###############################################################################
     def _send_request(self,request_uri, result_type):
         
-         """ Send URI get request to Skyspark database and return http response for later parsing.
+        """ Send URI get request to Skyspark database and return http response for later parsing.
         
         Parameters
         ----------
@@ -122,6 +122,21 @@ class spyspark_client(object):
 ###############################################################################
     def _manage_errors(self,r,result_type):
 
+        """ Give appropriate error text based on incoming status code.
+        
+        Parameters
+        ----------
+        r : json
+            JSON return body.
+        result_type : str
+            Resulting format of returned data (application/json, csv, or zinc).
+            
+        Raises
+        -------
+        Exception
+            400 Error exceptions based on incoming status code 
+            
+        """
         if r.status_code == 200:
             if r.text != "empty\n":
                 return
@@ -143,10 +158,40 @@ class spyspark_client(object):
 ###############################################################################
     def _parse_metadata_table_json(self, res):
         
+        """ Parse response body from get request if metadata is returned.
+        
+        Parameters
+        ----------
+        res : HTTP response body
+            Response body of GET request returned from Skyspark database.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing meter metadata from Skyspark 
+            
+        """
+        
         return pd.io.json.json_normalize(res["rows"])
 
 ###############################################################################
     def _parse_TS_data_json(self, res, result_type):
+        
+        """ Parse response body from get request if time series is returned.
+        
+        Parameters
+        ----------
+        res : HTTP response body
+            Response body of GET request returned from Skyspark database.   
+        result_type : str
+            Returned data that is request by user (ts for time series or both for time series and metadata).
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing meter time series data and/or metadata from Skyspark 
+            
+        """
         
         ## get metadata info
         metadata = (pd.io.json.json_normalize(res["cols"][1:len(res["cols"])]))
@@ -191,6 +236,24 @@ class spyspark_client(object):
 
 ###############################################################################
     def _parse_results(self, r, result_format, result_type):
+        
+        """ Parse response body based on result format that incoming data is in.
+        
+        Parameters
+        ----------
+        r : HTTP response body
+            Response body of GET request returned from Skyspark database.  
+        result_format : str
+            Requested MIME type in which to receive results (default: "text/csv" for CSV format).    
+        result_type : str
+            Returned data that is request by user (ts for time series or both for time series and metadata).
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing meter time series data and/or metadata from Skyspark 
+            
+        """
 
         ## this method manages the different result_formats: csv, json, zinc
 
@@ -275,12 +338,47 @@ class spyspark_client(object):
 
 ###############################################################################
     def _readAll(self, query, result_format = "application/json", result_type="meta"):
-
+        
+        """ Run Axon query and return meter metadata from Skyspark database.
+        
+        Parameters
+        ----------
+        query : String
+            Axon query. 
+        result_format : str
+            Returned format from HTTP reponse body (default is application/json).
+        result_type : str
+            Requested return type of incoming data (dafault is meta).
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing metadata information from Skyspark database.
+            
+        """
 
         return self.request(query=query, result_format=result_format, result_type=result_type)
 
 ###############################################################################
     def _hisRead(self, query, result_format = "application/json", result_type="ts"):
+        
+        """ Run Axon query and return meter time series from Skyspark database.
+        
+        Parameters
+        ----------
+        query : String
+            Axon query. 
+        result_format : str
+            Returned format from HTTP reponse body (default is application/json).
+        result_type : str
+            Requested return type of incoming data (dafault is ts).
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing time series information from Skyspark database.
+            
+        """
 
         # eventually we want to dot this after a readAll
 
@@ -546,7 +644,7 @@ class spyspark_client(object):
 # Helper function to find the max of the data quality analysis columns and returns max name
     def _find_dominate_issue(self, frame):
         
-        """ Helper function to data_quality_analysis to find the maximum value achieved in all columns and returns name of column.
+        """ Helper function to data_quality_analysis() to find the maximum value achieved in all columns and returns name of column.
         
         Parameters
         ----------
@@ -575,7 +673,7 @@ class spyspark_client(object):
 # Helper function to find the percent of OK for data quality analysis and returns that percent
     def _find_percent_ok(self, frame):
         
-        """ Helper function to data_quality_analysis to find the overall percentage of meter being OK based on subtraction of error metrics.
+        """ Helper function to data_quality_analysis() to find the overall percentage of meter being OK based on subtraction of error metrics.
         
         Parameters
         ----------
@@ -594,7 +692,7 @@ class spyspark_client(object):
 # Helper function to return list of dates that we will be running the analysis on for meter quality checks
     def get_dates_list(self, worksheet):
         
-        """ Helper function to run_analysis_from_meta to generate list of dates for meter analysis.
+        """ Helper function to run_analysis_from_meta() to generate list of dates for meter analysis.
         
         Parameters
         ----------
@@ -635,7 +733,7 @@ class spyspark_client(object):
         Sheets_url : String
             String of the url that points to the Google Sheets document that contains manual read data.   
         save_each_meter_to_csv : Boolean
-            Optional Boolean value to save meter analysis information into csv and png files.
+            Optional Boolean value to save meter analysis information into csv and png files (default is False).
             
         Returns
         -------
@@ -747,13 +845,9 @@ class spyspark_client(object):
         Returns
         -------
         df : pd.DataFrame()
-            DataFrame containing time series or metadata information from Axon query.
+            DataFrame containing time series or metadata information from Skyspark database.
+            
         """
-        '''
-        Takes in Axon query that is based on link number or equipRef and hisRead or no hisRead option for ts or metadata respectively
-        Returns ts or metadata in dataframe format.
-        
-        '''
         df = pd.DataFrame()
         if ("->link==" in query) and (".hisRead" not in query):
             df = self._readAll(query)
