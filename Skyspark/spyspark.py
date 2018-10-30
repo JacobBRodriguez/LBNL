@@ -818,13 +818,13 @@ class spyspark_client(object):
                 result.index = pd.to_datetime(result.index, format="%m/%d/%Y")
                 result = result.sort_index()
                 extended[item] = result["Percent Dif"]
+                ax = result.plot.bar(y=["Manual Read", "Skyspark Read"], rot=0, figsize=(22,10))
+                fig = ax.get_figure()
+                fig.autofmt_xdate()
 
                 if save_each_meter_to_csv: # If we want to save each meter to an individual
                     link_string = "Link_"+str(item)
                     result.to_csv(link_string+"_Reads.csv")
-                    ax = result.plot.bar(y=["Manual Read", "Skyspark Read"], rot=0, figsize=(22,10))
-                    fig = ax.get_figure()
-                    fig.autofmt_xdate()
                     fig.savefig(link_string+".png")
                         
             except:    
