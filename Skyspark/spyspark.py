@@ -7,7 +7,7 @@ request        Send Axon request to SkySpark, return resulting text
 __name__       Simple console to send REST request to SkySpark
 
 Created on Sun Nov 19 15:29:51 2017
-Last updated on 2018-10-15
+Last updated on 2018-11-4
 
 @author: rvitti
 @author: marco.pritoni
@@ -256,7 +256,6 @@ class spyspark_client(object):
         """
 
         ## this method manages the different result_formats: csv, json, zinc
-
         ## csv
         if result_format == "text/csv":
             text = re.sub('â\x9c\x93','True',r.text)    # Checkmarks
@@ -275,10 +274,10 @@ class spyspark_client(object):
             elif result_type == "both":
                 return self._parse_TS_data_json(res=res,result_type=result_type)
 
-        ## TODO: add zinc
-        elif result_format == "text/zinc":
-
-            return r
+            ## TODO: add zinc
+            elif result_format == "text/zinc":
+                return r
+                
 
 
 ###############################################################################
@@ -332,8 +331,20 @@ class spyspark_client(object):
 
             ## 4 - parse results
             else:
-                res= self._parse_results(r,result_format, result_type)
+                # First use of client will trigger JSONDecodeError. Need to update auth token and resend request.
+                try:
+                    res= self._parse_results(r,result_format, result_type)
+                except ValueError:
+                    scram.update_token()
+                    self.auth_token = scram.current_token()
+                    r = self._send_request(request_uri, result_format)
+                    err = self._manage_errors(r, result_format)
 
+                    if err:
+                        return err
+                    else:
+                        res= self._parse_results(r,result_format, result_type)
+                    
                 return res
 
 ###############################################################################
@@ -853,9 +864,13 @@ class spyspark_client(object):
             df = self._readAll(query)
         elif ("equipRef==" in query) and (".hisRead" not in query):
             df = self._readAll(query)
+        elif ("id==" in query) and (".hisRead" not in query):
+            df = self._readAll(query)
         elif ("->link==" in query) and (".hisRead" in query):
             df = self._hisRead(query)
         elif ("equipRef==" in query) and (".hisRead" in query):
+            df = self._hisRead(query)
+        elif ("id==" in query) and (".hisRead" in query):
             df = self._hisRead(query)
         return df
 ###############################################################################
