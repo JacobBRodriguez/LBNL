@@ -455,8 +455,8 @@ class spyspark_client(object):
         
         for item in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
             query = 'readAll(equipRef==@'+item.split(' ')[0][2:]+').hisRead(now, {limit: null})'
-            ts = self._hisRead(query) # Get current timeseries data from query
-            main_df = main_df.append(ts) # Append returned timeseries data to current dataframe  
+            ts = self._hisRead(query)
+            main_df = main_df.append(ts)
         return main_df 
 ###############################################################################
     def get_metadata(self, tags):
@@ -474,75 +474,72 @@ class spyspark_client(object):
             DataFrame containing metadata/meters that match given criteria.
             
         """
+        # NOTE: Non-marker tags cannot have negated query i.e. 'not link=='28.75'
         query = 'readAll('
         flag = 0
         if tags: # If given list of tags
             for key, value in tags.items(): # For each tag in the list, add to query that is being built
                 if flag == 0: # For first tag, do not include 'and'
                     flag = 1
-                    
-                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True: # If want to include both gas and elec
+                    # If want to include both gas and elec
+                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True:
                         query = query + '(elec or gas)'
-                        
-                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False: # If want to include both gas and elec
+                    # If NOT want to include both gas and elec   
+                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False: 
                         query = query + 'not (elec or gas)'
-                    
-                    elif value == True: # If Marker is true
+                    # If Marker is true
+                    elif value == True: 
                         query = query + key
-                        
-                    elif value == False: # If Marker is false
+                    # If Marker is false    
+                    elif value == False: 
                         query = query + 'not '+ key
-                            
-                    elif ('id' in key): # If Ref wants to include key
+                    # If Ref wants to include key        
+                    elif ('id' in key): 
                             query = query + key+'==@'+ value
-                    
-                    # NOTE: Non-marker tags cannot have negated query i.e. 'not link=='28.75'
-                    #elif ('not' in value) and ('link' in key): # Query based on link number
-                     #   query = query + 'not '+key+'=="'+ value.split(' ')[1]+'"'
-                            
-                    elif ('link' in key): # Query based on link number
+                    # Query based on link number        
+                    elif ('link' in key): 
                         query = query + key +'=="'+ value+'"'
-                    
-                    elif ('combustionVolume' in key): # Query based on combustionVolume
+                    # Query based on combustionVolume
+                    elif ('combustionVolume' in key): 
                         query = query + key+'=='+value
-                        
-                    elif ('navName' in key): # Query based on navName
+                    # Query based on navName    
+                    elif ('navName' in key): 
                         query = query + key +'=="'+ value+'"'
-                        
-                    elif ('siteRef' in key): # Query based on siteRef
+                    # Query based on siteRef    
+                    elif ('siteRef' in key): 
                             query = query + key+'==@'+ value
                
                 else: # include 'and' for rest of tags in query
                     
-                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True: # If want to include both gas and elec
+                    if ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == True: 
                         query = query + ' and (elec or gas) '
                         
-                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False: # If want to include both gas and elec
+                    elif ( ('elec or gas' in key) or ('gas or elec' in key) ) and value == False:
                         query = query + ' and not (elec or gas)'
                     
-                    elif value == True: # Query based on marker tags
+                    elif value == True:
                         query = query + ' and ' + key
                         
-                    elif value == False: # Marker tag queries
+                    elif value == False:
                         query = query + ' and not '+ key
                         
-                    elif ('id' in key): # If Ref wants to include key
+                    elif ('id' in key):
                         query = query +' and ' + key +'==@'+ value
                             
-                    elif ('link' in key): # For link number
+                    elif ('link' in key):
                         query = query +' and ' + key +'=="'+ value+'"'
                     
-                    elif ('combustionVolume' in key): # For combustionVolume
+                    elif ('combustionVolume' in key):
                         query = query +' and '+ key+'=='+value
                         
-                    elif ('navName' in key): # For navName
+                    elif ('navName' in key):
                         query = query +' and '+ key +'=="'+ value+'"'
                         
-                    elif ('siteRef' in key): # For siteRef
+                    elif ('siteRef' in key):
                         query = query +' and '+ key+'==@'+ value
                         
             query = query + ')'
-            print(query)
+            print(query) # Output composed query to user
             df = self._readAll(query)
             return df     
 ###############################################################################
@@ -562,16 +559,16 @@ class spyspark_client(object):
             DataFrame containing time series data from meters in metadata input.
             
         """
-        main_df = pd.DataFrame()
+        return_df = pd.DataFrame()
         now = datetime.datetime.now() # Getting current date so can query data based off of most recent timestamp
         date = now.strftime("%Y,%m,%d")
         
-        for item in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
-            query = 'readAll(equipRef==@'+item.split(' ')[0][2:]+').hisRead(date(2010,01,01)..date('+date+'), {limit: null})'
-            ts = self._hisRead(query) # Get historical timeseries data from query
-            main_df = main_df.append(ts) # Append returned timeseries data to current dataframe
+        for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
+            query = 'readAll(equipRef==@'+meter.split(' ')[0][2:]+').hisRead(date(2010,01,01)..date('+date+'), {limit: null})'
+            timeseries = self._hisRead(query)
+            return_df = return_df.append(timeseries)
             
-        return main_df
+        return return_df
 ############################################################################### 
 # Function is to take in dataframe column (Accumulator, Raw) from gas meters and check if interval data is correct
 # If intervals are fine, returns original frame, else returns reindexed dataframe based on reasoned interval
@@ -701,7 +698,7 @@ class spyspark_client(object):
         return (100 - percent_bad)
 ###############################################################################
 # Helper function to return list of dates that we will be running the analysis on for meter quality checks
-    def get_dates_list(self, worksheet):
+    def get_dates_list(self, worksheet, month_range):
         
         """ Helper function to run_analysis_from_meta() to generate list of dates for meter analysis.
         
@@ -716,14 +713,17 @@ class spyspark_client(object):
             List containing dates for given range data analysis will be ran on.
             
         """
+        begin_date_range = datetime.datetime.strptime(month_range[0], '%m/%d/%Y').strftime('%Y,%m,%d')
+        end_date_range = datetime.datetime.strptime(month_range[1], '%m/%d/%Y').strftime('%Y,%m,%d')
         dates = {}
         dateList = []
         timestamps = worksheet.col_values(1)
         del timestamps[0]
       
         for item in timestamps: 
-            if item != '': 
-                dates[item] = item
+            if item != '':
+                if begin_date_range <= datetime.datetime.strptime(item.replace(" ",""), '%m/%d/%Y').strftime('%Y,%m,%d') <= end_date_range:
+                    dates[item] = item
               
         for key, value in dates.items():
             dateList.append(value.replace(" ",""))
@@ -733,7 +733,7 @@ class spyspark_client(object):
 # Function takes in dataframe of metadata information and url of GoogleSheets wanting to compare to
     # Returns a dataframe of meter comparison to GoogleSheets  
  
-    def run_analysis_from_meta(self, metadata, Sheets_url, save_each_meter_to_csv=False):
+    def run_analysis_from_meta(self, metadata, Sheets_url, month_range, save_each_meter_to_csv=False):
         
         """ Run meter comparison and data quality analysis on meters in metadata DataFrame.
         
@@ -748,25 +748,26 @@ class spyspark_client(object):
             
         Returns
         -------
-        extended : pd.DataFrame()
+        comparison_df : pd.DataFrame()
             DataFrame containing all meter's comparison information for given time frame.
             
-        main_df : pd.DataFrame()
+        data_quality_df : pd.DataFrame()
             DataFrame containing all meter's data quality analysis information for given time frame.
             
         """
         # Holding dataframes
-        main_df = pd.DataFrame()
-        extended = pd.DataFrame()
+        data_quality_df = pd.DataFrame()
+        comparison_df = pd.DataFrame()
+        
             # GoogleSheets imports
         scope = ['https://spreadsheets.google.com/feeds'] # Keep this as the scope
         credentials = ServiceAccountCredentials.from_json_keyfile_name('My Project-01d0ad43c251.json',scope) # Json comes from Google API                                                    # page. Can just use my email on API page from this to access spreadsheets
         gc = gspread.authorize(credentials)
         
-        sheet = gc.open_by_url(Sheets_url)
-        worksheet = sheet.get_worksheet(0)
-        months_list = self.get_dates_list(worksheet)
-        all_list = worksheet.get_all_values()
+        Spreadsheet = gc.open_by_url(Sheets_url)
+        worksheet = Spreadsheet.get_worksheet(0)
+        months_list = self.get_dates_list(worksheet,month_range)
+        link_num_list = worksheet.get_all_values()
  
         last_month_index = (len(months_list)-1)
         date_time_start = datetime.datetime.strptime(months_list[0], '%m/%d/%Y').strftime('%Y,%m,%d')
@@ -778,22 +779,22 @@ class spyspark_client(object):
                 link_float = "{:.2f}".format(float(item)) # Need float to retain 2 past decimal point precision
                 info_get = self.query('readAll(equipRef->link=="'+item+'").hisRead(date('+date_time_start+')..date('+date_time_end+'), {limit: null})')
                 time_dict = {}
-                man_value = {}
-                sky_value = {}
-                specific_column = ""
+                manual_read_value = {}
+                skyspark_value = {}
+                energy_column = ""
                 multiplier = 0 # Need multiplier for Skyspark energy data for gas and water
                 
-                for thing in info_get.columns:
-                    if 'BTU' in thing:
+                for meter in info_get.columns:
+                    if 'BTU' in meter:
                         multiplier = pow(10,5)
                         break
-                    elif 'kWh' in thing:
+                    elif 'kWh' in meter:
                         multiplier = 1
                         break
-                        
+                    
                 for column in info_get.columns:
                     if("Energy" in column and "Accumulator" not in column):
-                        specific_column = column
+                        energy_column = column
 
                 for k,i in enumerate(months_list):
                     #do something with index k
@@ -804,33 +805,33 @@ class spyspark_client(object):
                         timeStart = i + " 12:15:00"
                         timeEnd = months_list[k+1] + " 12:00:00"
                         
-                        num = info_get[specific_column].to_frame()[timeStart : timeEnd]
-                        num = (float(num.sum()[0])) / multiplier # Multiplier = 1 for electricity meters and 10^5 for gas meters
-                        for row in all_list:
+                        ts_data = info_get[energy_column].to_frame()[timeStart : timeEnd]
+                        ts_data = (float(ts_data.sum()[0])) / multiplier # Multiplier = 1 for electricity meters and 10^5 for gas meters
+                        for row in link_num_list:
                             if row[1] == link_float:
                                 
                                 if pd.to_datetime(row[0]) == datetime.datetime.strptime(months_list[k+1], '%m/%d/%Y'):
-                                    time_dict[months_list[k+1]] = ((float(row[4].replace(',','')) - num) /                                                                                          float(row[4].replace(',',''))) * 100 # Percent different
-                                    man_value[months_list[k+1]] = float(row[4].replace(',',''))
-                                    sky_value[months_list[k+1]] = num
+                                    time_dict[months_list[k+1]] = ((float(row[4].replace(',','')) - ts_data) /                                                                                          float(row[4].replace(',',''))) * 100 # Percent different
+                                    manual_read_value[months_list[k+1]] = float(row[4].replace(',',''))
+                                    skyspark_value[months_list[k+1]] = ts_data
                                     
 
                     except:
                         print("Error for data: "+i+" on meter "+item)
 
             try:
-                data_quality_analysis1 = self.data_quality_analysis(info_get)
-                main_df = main_df.append(data_quality_analysis1)
+                data_quality_analysis_info = self.data_quality_analysis(info_get)
+                data_quality_df = data_quality_df.append(data_quality_analysis_info)
 
-                percent = pd.DataFrame(time_dict, index=[0]).T.rename( columns={0:"Percent Dif"})
-                man = pd.DataFrame(man_value, index=[0]).T.rename( columns={0:"Manual Read"})
-                sky = pd.DataFrame(sky_value, index=[0]).T.rename( columns={0:"Skyspark Read"})
-                result = pd.concat([man, sky, percent], axis=1)
+                percent_difference = pd.DataFrame(time_dict, index=[0]).T.rename( columns={0:"Percent Dif"})
+                manual_read_dict = pd.DataFrame(manual_read_value, index=[0]).T.rename( columns={0:"Manual Read"})
+                skyspark_dict = pd.DataFrame(skyspark_value, index=[0]).T.rename( columns={0:"Skyspark Read"})
+                result = pd.concat([manual_read_dict, skyspark_dict, percent_difference], axis=1)
                 result.index = pd.to_datetime(result.index, format="%m/%d/%Y")
                 result = result.sort_index()
-                extended[item] = result["Percent Dif"]
-                ax = result.plot.bar(y=["Manual Read", "Skyspark Read"], rot=0, figsize=(22,10))
-                fig = ax.get_figure()
+                comparison_df[item] = result["Percent Dif"]
+                barplot = result.plot.bar(y=["Manual Read", "Skyspark Read"], rot=0, figsize=(22,10))
+                fig = barplot.get_figure()
                 fig.autofmt_xdate()
 
                 if save_each_meter_to_csv: # If we want to save each meter to an individual
@@ -840,9 +841,10 @@ class spyspark_client(object):
                         
             except:    
                     print("Error on link number: "+item)
-        extended.index = pd.to_datetime(extended.index)
-        extended = extended.sort_index()
-        return extended, main_df
+                    
+        comparison_df.index = pd.to_datetime(comparison_df.index)
+        comparison_df = comparison_df.sort_index()
+        return comparison_df, data_quality_df
 ###############################################################################
     def query(self, query):
         
