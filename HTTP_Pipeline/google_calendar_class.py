@@ -3,7 +3,7 @@ import datetime
 from googleapiclient.discovery import build
 from httplib2 import Http
 from oauth2client import file, client, tools  # pip install --upgrade google-api-python-client oauth2client
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
@@ -19,6 +19,15 @@ class google_cal_client():
     ##################################################################################################
 
     def _establish_client(self):
+        """
+        Function uses saved credentials to establish connection to
+        calendar and returns client for querying purposes.
+
+        :return
+        service : googleapiclient object
+        Object used to make requests to established calendar via API
+
+        """
         store = file.Storage('token.json')
         creds = store.get()
 
@@ -34,6 +43,13 @@ class google_cal_client():
     ##################################################################################################
 
     def _get_calendar_list(self):
+        """
+        Function uses googleapiclient object to return list
+        of available calendars for current user credentials
+
+        :return:
+         None
+        """
         # Call the calendar API
         # TODO: confirm change to PST
         now = datetime.now().isoformat()
@@ -50,11 +66,29 @@ class google_cal_client():
                 break
 
     ##################################################################################################
-    # End _get_calendar_list(client=None) NOTE May not need functionality
+    # End _get_calendar_list() NOTE May not need functionality
     ##################################################################################################
 
     def get_events(self, start, end, calendar_id=None):
+        """
+        Function queries specific calendar for booking information
+        based on start and end date provided and returns information
+        in boolean format.
 
+        :param start: string
+        String representation of the start date to query in form 'MM/DD/YYYY hh:mm:ss'
+
+        :param end: string
+        String representation of the end date to query in form 'MM/DD/YYYY hh:mm:ss'
+
+        :param calendar_id: string
+        String representation of LBNL Google Calendar ID
+
+        :return:
+        returned_dict : dictionary
+        Dictionary containing boolean values of when room is booked (start:True/end:False)
+        Structure of dictionary is tree form [Value] -> [(start,end)]*
+        """
         returned_dict = {}
         service = self._establish_client()
 
@@ -67,7 +101,7 @@ class google_cal_client():
 
         try:
             events_result = service.events().list(calendarId=calendar_id, timeMin=start_time, timeMax=end_time,
-                                                  maxResults=30, singleEvents=True,
+                                                  maxResults=60, singleEvents=True,
                                                   orderBy='startTime').execute()
             events = events_result.get('items', [])
 
@@ -91,7 +125,7 @@ class google_cal_client():
         return returned_dict
 
 ##################################################################################################
-# End get_events(calendar_id=None)
+# End get_events(start, end, calendar_id=None)
 ##################################################################################################
 
 

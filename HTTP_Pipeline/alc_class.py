@@ -8,7 +8,8 @@ from datetime import datetime
 class _Custom_Transport(HttpAuthenticated):
 
     def u2handlers(self):
-        '''Defines an http handler appropriate for the b59 server.
+        """
+        Defines an http handler appropriate for the b59 server.
 
         Returns
         -------
@@ -17,7 +18,7 @@ class _Custom_Transport(HttpAuthenticated):
         HTTPS communications handler with context configured for
         communication with ALC server.
 
-        '''
+        """
 
         # Use handlers from superclass
         handlers = HttpAuthenticated.u2handlers(self)
@@ -47,7 +48,8 @@ class alc_client():
     ##################################################################################################
 
     def _connect(self):
-        """Connect to the ALC server SOAP interface.
+        """
+        Connect to the ALC server SOAP interface.
 
         Returns
         -------
@@ -69,7 +71,8 @@ class alc_client():
 
     def collect_data(self, trend_log_paths, start_time, final_time, columns=None):
 
-        """Collect data from ALC server via SOAP interface.
+        """
+        Collect data from ALC server via SOAP interface.
 
         Parameters
         ----------

@@ -136,6 +136,12 @@ class MyServer(BaseHTTPRequestHandler):
 
 
 def main():
+    """
+    Main function to establish local server on declared socket and keep-alive
+    until keyboard termination
+    :return:
+    None
+    """
     # Declare HTTP server request object with declared hostname and port number.
     my_server = HTTPServer((hostName, hostPort), MyServer)
     print(time.asctime(), "Server Starts - %s:%s" % (hostName, hostPort))

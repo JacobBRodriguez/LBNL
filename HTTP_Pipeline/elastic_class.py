@@ -16,7 +16,8 @@ class elastic_client():
     # End __init__()
     ##################################################################################################
     def get_timeseries(self, data):
-        """Function to get timeseries data from ElasticSearch for an endpoint and parse results
+        """
+        Function to get time series data from ElasticSearch for an endpoint and parse results
         Parameters
         ----------
         data : string
