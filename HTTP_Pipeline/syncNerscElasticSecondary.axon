@@ -1,0 +1,118 @@
+/*
+
+  This function queries local server in 6hr increments according
+  to start and end dates. Makes recursive calls if range is greater
+  than 6hr and does so according to incremental tag variable.
+  Updates increment at end of calling.
+  
+  Arguments: 
+  point             NERSC Elastic point
+  absolute_start    dateTime object specifying start of ranged query
+  absolute_end      dateTime object specifying end of ranged query
+  absolute_backfill dateTime object specifying the backfill start
+  first_run         Boolean variable specifying that backfill variable is used or not
+  
+  // LBNL // JBR // Last Update: 2019-03-06 //
+
+*/
+
+(point, absolute_start, absolute_end, absolute_backfill, first_run) => do
+
+  // Inner function for recursion purposes
+  first_write: (point_again, inner_abs_start, inner_abs_end, num, backFill, inner_first) => do
+  
+  // If 10 recursive calls are made then update backfill tag and exit
+  if(num == 10) do
+    diff(point_again, {tempBackFill:backFill, -oldTag}).commit
+    return "60 hour backfill complete"
+  end
+  
+  if(inner_abs_start == backFill)
+    return "Point already backfilled to specified date"
+  
+    
+  // Set link number to appropriate id for hisWrite and tempDate write
+  link: readById(point_again->id)    
+  
+  // If 6hr sync then set start and end accordingly
+  if(inner_abs_end - inner_abs_start <= 6hr ) do // 6 hour sync of data
+    start_date: inner_abs_start
+    end_date: inner_abs_end
+  // else if reach end of backfill period
+  else if(inner_abs_start > (backFill - 6hr) ) do
+    start_date: inner_abs_start
+    end_date: inner_abs_start + 6hr
+  // else if first run of new backfill period
+  else if(inner_first) do
+    start_date: inner_abs_end - 6hr
+    end_date: inner_abs_end
+  // Else backfill according to 6hr incremental tag variable
+  else do
+    start_date: backFill - 6hr
+    end_date: backFill
+  end
+  
+  
+  // Format datetime strings
+  start_string: start_date.format("YYYY-MM-DD'T'hh:mm:ss")
+  end_string: end_date.format("YYYY-MM-DD'T'hh:mm:ss")
+  
+  // Prepare query
+  baseURI: "{\"index\":\""+ point_again->elasticIndex + "\",\"metric\":\""+ point_again->elasticMetric + "\""
+  fullURI: baseURI + ",\"value\":\"data.datum\",\"time\":\"@timestamp\",\"start\":\"<start_time>\",\"end\":\"<end_time>\"}?elastic"
+  
+  uri: fullURI.toStr().replace("<start_time>",start_string).replace("<end_time>", end_string)
+  // Local Python server is running on port 9000
+  query: "http://localhost:9000/?"+uri
+
+  try do
+     // Call ioReadJson to Python server for middleman request
+     // Parse returned timeseries string into JSON format
+     data: ioReadJson(``+query)
+  end catch(ex) do // Catch any errors
+    // Skip over 6 hour period for next run
+    diff(point_again, {tempBackFill:start_date, -oldTag}).commit
+    return "Period Blackout - skipping over 6 hour period"
+  end // end try-catch
+  
+  result_list: []
+  // Iterate on rows, parse and store/write data
+  data["value"].map row => do
+    datum_list: row[1] / point_again->factor
+    time_list: row[0]
+    time_list = parseDateTime(time_list+" Los_Angeles", "YYYY-MM-DD'T'hh:mm:ss.zzz", "Los_Angeles")
+    result_list = result_list.add({ts: time_list, val: datum_list})
+  end
+  
+  result_grid: result_list.toGrid
+  
+  // If 6hr sync then write only the new data since hisEnd and exit
+  if(inner_abs_end - inner_abs_start <= 6hr ) do
+    filtered_grid: result_grid.findAll(row => row->ts > point_again->hisEnd + 1s)
+    hisWrite(filtered_grid, link)
+    hisSync()
+    return "6 hour sync complete"
+  // Else if last write for backFill then write and exit
+  else if(inner_abs_start > (backFill - 6hr) ) do
+    filtered_grid: result_grid.findAll(row => row->ts < end_date - 1s)
+    hisWrite(filtered_grid, link)
+    hisSync()
+    diff(point_again, {tempBackFill:inner_abs_start, -oldTag}).commit
+    return "Backfill to start complete"
+  // Else write backfill data that is older than current backfill date
+  else do
+    filtered_grid: result_grid.findAll(row => row->ts < end_date - 1s)
+    hisWrite(filtered_grid, link)
+    hisSync() // block until all writes are complete
+  end
+  
+  num = num + 1
+  inner_first = false
+  
+  first_write(point_again, inner_abs_start, inner_abs_end, num, start_date, inner_first)
+  
+end // end first_write
+
+first_write(point, absolute_start, absolute_end, 0, absolute_backfill, first_run)
+
+end // end all
