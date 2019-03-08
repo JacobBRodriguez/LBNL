@@ -1,0 +1,34 @@
+/*
+
+  This function queries the inner elastic search
+  sync function with the proper parameters that
+  are based on the history start and end dates.
+  
+  Arguments:
+  point        NERSC Elastic point
+  start_time   dateTime object specifying start of ranged query
+  end_time     dateTime object specifying end of ranged query
+  
+  // LBNL // JBR // Last Update: 2019-03-06 //
+
+*/
+
+(point, start_time, end_time) => do
+  
+  if(end_time - start_time > 6hr) do // want to do backfill on points
+  
+    if(point["tempBackFill"] == null) do
+      syncNerscElasticSecondary(point, start_time, end_time, now(), true)
+    // end no tempBackFill
+    else if(point["tempBackFill"] < start_time) do
+      syncNerscElasticSecondary(point, start_time, end_time, now(), true)
+    // end reset tempBackFill
+    else
+      syncNerscElasticSecondary(point, start_time, end_time, point["tempBackFill"], false)
+  // end if > 6hr
+  else if( end_time - start_time <= 6hr ) do //do sync for last 6 hours
+    syncNerscElasticSecondary(point, start_time, end_time, now(), false)
+  // end if <= 6hr
+  end // end if-else
+  
+end
