@@ -7,7 +7,7 @@ request        Send Axon request to SkySpark, return resulting text
 __name__       Simple console to send REST request to SkySpark
 
 Created on Sun Nov 19 15:29:51 2017
-Last updated on 2018-11-4
+Last updated on 2019-03-12
 
 @author: rvitti
 @author: marco.pritoni
@@ -583,31 +583,44 @@ class spyspark_client(object):
         display(self.raw_button)
 ###############################################################################
 # Function takes in dataframe of metadata information and returns timeseries data in dataframe format
-    def get_ts_from_meta(self, metadata):
+    def get_ts_from_meta(self, metadata, date_range, quality_check=False):
         
-        """ Return all time series data from given meter metadata input.
+        """ Return time series data in specified range from given point OR return data quality results.
         
         Parameters
         ----------
         metadata : pd.DataFrame()
             DataFrame containing meter metadata.
+        date_range : List
+            List containing start and end date strings to set date range for time series query.
+        quality_check : Boolean
+            Boolean value to determine if running data quality analysis on data. Default: False
             
         Returns
         -------
-        pd.DataFrame()
-            DataFrame containing time series data from meters in metadata input.
-            
+        return_df : pd.DataFrame()
+            DataFrame containing time series data from meters in metadata input OR data quality results if 'quality_check' is true.
+        
         """
         return_df = pd.DataFrame()
-        now = datetime.datetime.now() # Getting current date so can query data based off of most recent timestamp
-        date = now.strftime("%Y,%m,%d")
+        data_quality_df = pd.DataFrame()
+        start_date = date_range[0]
+        end_date = date_range[1]
         
-        for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
-            query = 'readAll(equipRef==@'+meter.split(' ')[0][2:]+').hisRead(date(2010,01,01)..date('+date+'), {limit: null})'
-            timeseries = self._hisRead(query)
-            return_df = return_df.append(timeseries)
-            
-        return return_df
+        if not quality_check:
+            for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
+                query = 'readAll(id==@'+meter.split(' ')[0][2:]+').hisRead(date('+start_date+')..date('+end_date+'), {limit: null})'
+                timeseries = self.query(query)
+                return_df = return_df.append(timeseries)
+            return return_df
+        
+        else:
+            for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
+                query = 'readAll(id==@'+meter.split(' ')[0][2:]+').hisRead(date('+start_date+')..date('+end_date+'), {limit: null})'
+                timeseries = self.query(query)
+                data_quality_analysis_info = self.data_quality_analysis(timeseries)
+                return_df = return_df.append(data_quality_analysis_info)
+            return return_df
 ############################################################################### 
 # Function is to take in dataframe column (Accumulator, Raw) from gas meters and check if interval data is correct
 # If intervals are fine, returns original frame, else returns reindexed dataframe based on reasoned interval
@@ -926,6 +939,26 @@ class spyspark_client(object):
         comparison_df.index = pd.to_datetime(comparison_df.index)
         comparison_df = comparison_df.sort_index()
         return comparison_df, data_quality_df
+###############################################################################
+    def nersc_data_quality(self, metadata, month_range):
+        
+        """ Run data quality analysis on Nersc meters for given range and return results
+        
+        Parameters
+        ----------
+        metadata : pd.DataFrame()
+            DataFrame containing meter metadata.
+        month_range : List
+            List containing start and end date strings to set date range for time series query.
+            
+        Returns
+        -------
+        pd.DataFrame()
+            DataFrame containing data quality results for points in metadata.
+        
+        """
+        return self.get_ts_from_meta(metadata, month_range, quality_check=True)
+            
 ###############################################################################
     def query(self, query):
         
