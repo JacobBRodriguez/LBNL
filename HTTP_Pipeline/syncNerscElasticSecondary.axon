@@ -52,6 +52,9 @@
     end_date: backFill
   end
   
+  // convert dateTime to UTC
+  start_date = start_date.toTimeZone("UTC")
+  end_date = end_date.toTimeZone("UTC")
   
   // Format datetime strings
   start_string: start_date.format("YYYY-MM-DD'T'hh:mm:ss")
@@ -80,7 +83,8 @@
   data["value"].map row => do
     datum_list: row[1] / point_again->factor
     time_list: row[0]
-    time_list = parseDateTime(time_list+" Los_Angeles", "YYYY-MM-DD'T'hh:mm:ss.zzz", "Los_Angeles")
+    time_list = parseDateTime(time_list+" UTC", "YYYY-MM-DD'T'hh:mm:ss.zzz", "UTC")
+    time_list = time_list.toTimeZone("Los_Angeles") // Convert dateTime back to PST
     result_list = result_list.add({ts: time_list, val: datum_list})
   end
   
