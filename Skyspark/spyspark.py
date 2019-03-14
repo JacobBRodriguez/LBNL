@@ -594,7 +594,7 @@ class spyspark_client(object):
         date_range : List
             List containing start and end date strings to set date range for time series query.
         quality_check : Boolean
-            Boolean value to determine if running data quality analysis on data. Default: False
+            Boolean value to determine if running data quality analysis on data and to return results only. Default: False
             
         Returns
         -------
@@ -602,8 +602,10 @@ class spyspark_client(object):
             DataFrame containing time series data from meters in metadata input OR data quality results if 'quality_check' is true.
         
         """
+        
+        list_of_dfs = []
         return_df = pd.DataFrame()
-        data_quality_df = pd.DataFrame()
+        
         start_date = date_range[0]
         end_date = date_range[1]
         
@@ -611,16 +613,16 @@ class spyspark_client(object):
             for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
                 query = 'readAll(id==@'+meter.split(' ')[0][2:]+').hisRead(date('+start_date+')..date('+end_date+'), {limit: null})'
                 timeseries = self.query(query)
-                return_df = return_df.append(timeseries)
-            return return_df
+                list_of_dfs.append(timeseries)
         
         else:
             for meter in metadata['id']: # for each meter id in metadata dataframe, query for timeseries data and append to main dataframe
                 query = 'readAll(id==@'+meter.split(' ')[0][2:]+').hisRead(date('+start_date+')..date('+end_date+'), {limit: null})'
                 timeseries = self.query(query)
                 data_quality_analysis_info = self.data_quality_analysis(timeseries)
-                return_df = return_df.append(data_quality_analysis_info)
-            return return_df
+                list_of_dfs.append(data_quality_analysis_info)
+        return_df = pd.concat(list_of_dfs)
+        return return_df
 ############################################################################### 
 # Function is to take in dataframe column (Accumulator, Raw) from gas meters and check if interval data is correct
 # If intervals are fine, returns original frame, else returns reindexed dataframe based on reasoned interval
@@ -940,7 +942,7 @@ class spyspark_client(object):
         comparison_df = comparison_df.sort_index()
         return comparison_df, data_quality_df
 ###############################################################################
-    def nersc_data_quality(self, metadata, month_range):
+    def nersc_data_quality(self, metadata, date_range):
         
         """ Run data quality analysis on Nersc meters for given range and return results
         
@@ -948,7 +950,7 @@ class spyspark_client(object):
         ----------
         metadata : pd.DataFrame()
             DataFrame containing meter metadata.
-        month_range : List
+        date_range : List
             List containing start and end date strings to set date range for time series query.
             
         Returns
@@ -957,7 +959,7 @@ class spyspark_client(object):
             DataFrame containing data quality results for points in metadata.
         
         """
-        return self.get_ts_from_meta(metadata, month_range, quality_check=True)
+        return self.get_ts_from_meta(metadata, date_range, quality_check=True)
             
 ###############################################################################
     def query(self, query):
